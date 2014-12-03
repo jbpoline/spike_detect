@@ -9,9 +9,122 @@ from nipy.algorithms.diagnostics.timediff import time_slice_diffs
 
 import fmri_qc as fqc
 
-#import sys
-#import os
-#import tempfile
+
+#----------------------- utility functions ------------------
+def give_pos(pos, N):
+    if pos == 'm':
+        x =  round(N/2)
+    elif pos == 's':
+        x = 0
+    elif pos == 'e':
+        x = N-1
+    elif isinstance(pos, int):
+        if pos < N and pos >= 0:
+            x = pos
+    else:
+        print("pos, N", pos, N)
+        raise ValueError, pos
+
+    return x
+
+def make_pattern(patt, tpos='m', sl='m', sh=(17,5)):
+
+    d = np.zeros(sh, dtype=np.int16)
+    T,S = sh
+    t = give_pos(tpos, T)
+    s = give_pos(sl, S)
+
+    patt = np.asarray(patt)
+    assert len(patt.shape) == 1
+    lpatt = patt.shape[0]
+    
+    try:
+        if tpos == 'e':
+            d[t-lpatt+1:t+1, s] = patt
+        else:
+            d[t:t+lpatt, s] = patt
+    except ValueError:
+        print(" patt, tpos, sh ", patt, tpos, sh)
+
+    return d
+
+def test_detect_pattern():
+
+    patt = [1,1,0]
+    lpatt = len(patt)
+    dshape = (7,3)
+
+    d = make_pattern(patt, 's', 's', sh=dshape)
+
+    assert_equal(d[0:3,0], patt)
+    assert_equal(d.shape, dshape)
+    T,S = d.shape
+
+    hits = fqc.detect_pattern(d, patt, ppos='s', dpos=0)
+
+    assert_equal(hits.shape, (T,S))
+    assert hits[0,0] == 1
+    assert hits[1,0] == 0
+    assert hits[0,1] == 0
+
+    hits = fqc.detect_pattern(d, patt, ppos='e', dpos=0)
+
+    assert hits[T-lpatt,0] == 1
+    assert hits[T-lpatt-1,0] == 0
+    assert hits[T-lpatt-2,0] == 0
+
+    hits = fqc.detect_pattern(d, patt, ppos='s', dpos=1)
+
+    assert_equal(hits.shape, (T,S))
+    assert hits[0,0] == 0
+    assert hits[1,0] == 1
+    assert hits[0,1] == 0
+
+    hits = fqc.detect_pattern(d, patt, ppos='e', dpos=1)
+
+    assert hits[T-lpatt,0] == 0
+    assert hits[T-lpatt-1,0] == 1
+    assert hits[T-lpatt-2,0] == 0
+#----------------------- utility functions ------------------
+
+def test_add_histeresis():
+    """
+    """
+    a = np.asarray(  [1.2, .2, 1.3, 0.4, .9, 2, 10, 8, 1.3, 1.1])
+        # rank array([  4,  0,   5,   1,  2, 7, 9,  8,   6, 3])
+            
+    spik = a > 9 # get the max
+    hspik = fqc.add_histeresis(a, spik, hthres=2.)
+
+    assert hspik[7] == 1, print("spik:", spik, "\nhspik: ", hspik)
+    assert hspik[6] == 0, print("spik:", spik, "\nhspik: ", hspik)
+    assert hspik[8] == 0, print("spik:", spik, "\nhspik: ", hspik)
+
+    a = np.asarray(  [1.2, 12, 13, 0.4, .9, 2, 10, 8, 1.3, 1.1])
+    spik = a > 9 # get the max
+    hspik = fqc.add_histeresis(a, spik, hthres=2.)
+
+    assert hspik[7] == 1, print("spik:", spik, "\nhspik: ", hspik)
+    assert hspik[6] == 0, print("spik:", spik, "\nhspik: ", hspik)
+    assert hspik[8] == 0, print("spik:", spik, "\nhspik: ", hspik)
+
+    a = np.asarray(  [1.2, .2, 13, 0.4, .9, 2, 10, 8, 1.3, 1.1])
+    spik = a > 10 # get the max
+    hspik = fqc.add_histeresis(a, spik, hthres=2.)
+    assert not np.any(hspik), print(hspik)
+
+def test_spikes_from_slice_diff():
+    
+    a = np.asarray(  [[1.2, 0.2, 1.3, 0.4, .9, 2, 10,   8, 1.3, 1.1],
+                      [1.2,  12, 13,  0.4, .9, 2,  1, 0.8, 1.3, 1.1],
+                      [1.2, 1.2, 1.3, 0.4, .9, 2,  1, 0.8, 1.3, 1.1]])
+    spik = fqc.spikes_from_slice_diff(a)
+    good =            [[0,0,0,0,0,0,1,1,0,0], 
+                       [0,1,1,0,0,0,0,0,0,0], 
+                       [0,0,0,0,0,0,0,0,0,0]]
+    
+    assert_array_equal(spik, good)
+    
 
 
 
@@ -92,5 +205,6 @@ def test_spike_detector():
     print("times_to_correct: ",times_2_correct, "slices_to_correct: ",
             slices_2_correct)
     assert_array_equal(np.asarray(tim), times_2_correct)
+
 
 
