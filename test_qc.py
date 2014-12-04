@@ -60,31 +60,52 @@ def test_detect_pattern():
     assert_equal(d.shape, dshape)
     T,S = d.shape
 
+    d = make_pattern(patt, 's', 's', sh=dshape)
     hits = fqc.detect_pattern(d, patt, ppos='s', dpos=0)
 
     assert_equal(hits.shape, (T,S))
     assert hits[0,0] == 1
     assert hits[1,0] == 0
+    assert hits[2,0] == 0
     assert hits[0,1] == 0
+
+    sl = 1
+    d = make_pattern(patt, 's', sl, sh=dshape)
+    hits = fqc.detect_pattern(d, patt, ppos='s', dpos=0)
+
+    assert_equal(hits.shape, (T,S))
+    assert hits[0,sl] == 1
+    assert hits[1,sl] == 0
+    assert hits[2,sl] == 0
+    assert hits[0,sl-1] == 0
 
     hits = fqc.detect_pattern(d, patt, ppos='e', dpos=0)
 
-    assert hits[T-lpatt,0] == 1
-    assert hits[T-lpatt-1,0] == 0
-    assert hits[T-lpatt-2,0] == 0
+    assert hits[T-lpatt, 0] ==  0, print(hits)
+    assert hits[T-lpatt+1,0] == 0
+    assert hits[T-lpatt+2,0] == 0
 
+    d = make_pattern(patt, 'e', 's', sh=dshape)
+    hits = fqc.detect_pattern(d, patt, ppos='e', dpos=0)
+
+    assert hits[T-lpatt, 0] ==  1, print(hits)
+    assert hits[T-lpatt+1,0] == 0
+    assert hits[T-lpatt+2,0] == 0
+
+    hits = fqc.detect_pattern(d, patt, ppos='e', dpos=1)
+
+    assert hits[T-lpatt, 0] ==  0, print("\n",hits)
+    assert hits[T-lpatt+1,0] == 1, print("\n",hits)
+    assert hits[T-lpatt+2,0] == 0, print("\n",hits)
+
+    d = make_pattern(patt, 's', 's', sh=dshape)
     hits = fqc.detect_pattern(d, patt, ppos='s', dpos=1)
 
     assert_equal(hits.shape, (T,S))
     assert hits[0,0] == 0
     assert hits[1,0] == 1
-    assert hits[0,1] == 0
+    assert hits[2,0] == 0
 
-    hits = fqc.detect_pattern(d, patt, ppos='e', dpos=1)
-
-    assert hits[T-lpatt,0] == 0
-    assert hits[T-lpatt-1,0] == 1
-    assert hits[T-lpatt-2,0] == 0
 #----------------------- utility functions ------------------
 
 def test_add_histeresis():
@@ -118,18 +139,19 @@ def test_spikes_from_slice_diff():
     a = np.asarray(  [[1.2, 0.2, 1.3, 0.4, .9, 2, 10,   8, 1.3, 1.1],
                       [1.2,  12, 13,  0.4, .9, 2,  1, 0.8, 1.3, 1.1],
                       [1.2, 1.2, 1.3, 0.4, .9, 2,  1, 0.8, 1.3, 1.1]])
-    spik = fqc.spikes_from_slice_diff(a)
+    spik = fqc.spikes_from_slice_diff(a.T, verbose=1)
+    print("\n spik \n", spik)
     good =            [[0,0,0,0,0,0,1,1,0,0], 
                        [0,1,1,0,0,0,0,0,0,0], 
                        [0,0,0,0,0,0,0,0,0,0]]
     
-    assert_array_equal(spik, good)
+    assert_array_equal(spik, np.asarray(good).T)
     
 
 
 
 # set random seed to make the test reproducible 
-np.random.seed(42)
+#np.random.seed(142)
 
 def make_data(sh=(4,4,5,17)):
     d = np.random.normal(size=sh)
@@ -138,14 +160,16 @@ def make_data(sh=(4,4,5,17)):
     return d
 
 
-def make_bad_slices(data, sli, tim, offset=3., scale=1.):
+def make_bad_slices(data, sli, tim, offset=4., scale=1.):
     """
     make some bad slices : replace
     eg: make_bad_slices(data, ([0:15], [2, 4, 9]), (2, 10)) 
+    does bad slices 0:15 at time 2, and 2,4,9 at time 10
     """
 
     dx,dy,dz,dt = data.shape
 
+    # check : one set of slice per times
     assert len(sli) == len(tim)
     
     # check the slices values are less than number of slices
@@ -181,8 +205,11 @@ def one_detection(sh,sli,tim):
     smd2 = qc['slice_mean_diff2']
     spikes = fqc.spikes_from_slice_diff(smd2, Zalph=5., histeresis=True, 
                                             hthres=2., verbose=1)
+    print("\n spikes ine one detec\n", spikes)
     final = fqc.final_detection(spikes, verbose=1)
+    print("\n final ine one detec\n", final)
     times_to_correct = np.where(final.sum(axis=1) > 0)[0]
+    print("times_to_correct: ",times_to_correct)
     slices_to_correct = {}
     for ti in times_to_correct:
         slices_to_correct[ti] = np.where(final[ti,:] > 0)[0]
@@ -191,20 +218,23 @@ def one_detection(sh,sli,tim):
 
 def test_spike_detector():
   
-    #   all_sh  = ((4,4,5,17), (4,4,5,17)) 
-    #   all_sli = ((range(5), [0, 2, 4]), ([3], [0, 2, 4]))
-    #   all_tim = ((2,10), (0,10))
+    all_sh  = ((4,4,5,17), (4,4,5,17), (4,4,5,17)) 
+    all_sli = ((range(5), [0, 2, 4]), ([3], [0, 2, 4]), ([0,4], [0,4]))
+    all_tim = ((2,10), (0,10), (0,16))
 
-    sh  = (4,4,5,17)
-    sli = ([3],)
-    tim = (0,)
+    #sh  = (4,4,5,17)
+    #sli = ([3],)
+    #tim = (0,)
 
-    #for sh, sli, tim in zip(all_sh, all_sli, all_tim):
-    print(sh,sli,tim)
-    times_2_correct, slices_2_correct =  one_detection(sh,sli,tim)
-    print("times_to_correct: ",times_2_correct, "slices_to_correct: ",
-            slices_2_correct)
-    assert_array_equal(np.asarray(tim), times_2_correct)
+    for sh, sli, tim in zip(all_sh, all_sli, all_tim):
+        print("\nsh,sli,tim: \n", sh,sli,tim)
+        times_2_correct, slices_2_correct =  one_detection(sh,sli,tim)
+        print("times_to_correct: ",times_2_correct, "slices_to_correct: ",
+                slices_2_correct)
+        assert_array_equal(np.asarray(tim), times_2_correct)
+        for idx,ti in enumerate(times_2_correct):
+            assert_array_equal(np.asarray(slices_2_correct[ti]), 
+                    np.asarray(sli[idx]))
 
 
 
