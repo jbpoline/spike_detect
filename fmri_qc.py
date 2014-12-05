@@ -52,6 +52,8 @@ def detect_pattern(d, patt, ppos=None, dpos=0, verbose=0):
     dpos: integer
         where to put '1' or 'True' in the result array when pattern is detected
         (0: start of pattern)
+
+    returns: numpy array of shape d.shape
     """
     T,S = d.shape
     hits = np.zeros(d.shape, dtype=np.bool)
@@ -61,46 +63,47 @@ def detect_pattern(d, patt, ppos=None, dpos=0, verbose=0):
     lpatt = patt.shape[0]
     assert dpos < lpatt, print("dpos < lpatt ", dpos, " < ",lpatt)
 
+    # if length of patt is 3, then length of possible hits is T-2
     lh = T-(lpatt-1)
     if verbose:
         print("\n patt:", patt, "\n d:", d, "\n ppos:", dpos, "\n dpos", dpos)
-    # if length of patt is 3, then length of possible hits is T-2
 
-    # check that pattern position ppos is not out of bound
-
-    
     if ppos is not None:
         # make ppos a number if necessary
         ppos = (0 if ppos=='s' else ( (T-lpatt) if ppos=='e' else ppos ))
         # check range
-        assert ppos in range(T-lpatt+1), \
-            print("ppos: ", ppos, "T-lpatt+1:", T-lpatt+1, "patt", patt, T, S)
+        assert ppos in range(lh), \
+            print("ppos: ", ppos, "lh=T-lpatt+1:", T-lpatt+1, "patt", patt, T, S)
 
         # use the same function to get the hits on a small bit of the array
         # small hits is "shits"
-        shits = detect_pattern(d[ppos:ppos+lpatt,:], patt)
+        shits = detect_pattern(d[ppos:ppos+lpatt,:], patt, ppos=None, dpos=0)
         hits[ppos+dpos,:] = shits[0,:]
-        print("shits:", shits)
+        if verbose: print("shits:", shits)
     else: 
         h = np.ones((lh,S), dtype=np.bool)
-        
         for i,p in enumerate(patt):
             d_is_p = (d[i:i+lh,:]==p)
             h = np.logical_and(h, d_is_p)
-        # debug; print("i:", i, " p:", p) #print(d_is_p) #print(h) #print("and")
-        # print(h)
+        # debug; print("i:", i, " p:", p) #print(d_is_p) #print(h) 
 
         hits[dpos:dpos+lh,:] = h
 
     return hits
     
-def add_histeresis(data, spik, hthres=2., verbose=0):
+def add_histeresis(data, spik, lspik, hthres=.15, verbose=0):
     """
-    this is putting to 1 points next to isolated points if they have
-    high rank.  isolated points are ones that have value one, but
+    hthres: float
+        A percentage of the rank to see if the next rank is close
+    spik:
+    lspik:
+
+    This is putting to 1 points next to isolated points if they have
+    high rank.  Isolated points are ones that have value one, but
     have not a temporal neighbor at 1 (detected with
-    detect_dirac_spikes fction) high rank : if the rank of the point
-    is within 2*nb_spikes.
+    detect_dirac_spikes fction) 
+    high rank : if the rank of the neighbor point is within
+    hthres*rank_of_original_spike.
     """
 
     new_spik = np.zeros_like(spik)
@@ -113,23 +116,18 @@ def add_histeresis(data, spik, hthres=2., verbose=0):
     # argsort of argsort gives the rank of the original idx
 
     # detect the "diracs" in the time dimention
-    nb_spikes = spik.sum()
     diracs = detect_dirac_spikes(spik)
     index_diracs = np.where(diracs)[0]
 
-    if verbose: 
-        print("\t  index_diracs: ", index_diracs)
-
     for idx in index_diracs:
         rank_idx = idx_ranks[idx]
-        if verbose: print("\t", "idx: ", idx, "rank_idx: ",rank_idx)
 
         # check if the previous or next time point rank is close
         if (idx>0) and (idx < T_1 - 1):
             rank_idx_1 = idx_ranks[idx-1]
             rank_idx_plus_1 = idx_ranks[idx+1]
             # take the max between the one before and the one after
-            h_rank = np.max([rank_idx_1, rank_idx_plus_1])
+            h_rank = max(rank_idx_1, rank_idx_plus_1)
             h_idx = idx-1 if (rank_idx_1 > rank_idx_plus_1) else idx+1
         elif idx == 0:
             h_rank = idx_ranks[idx+1]
@@ -139,36 +137,41 @@ def add_histeresis(data, spik, hthres=2., verbose=0):
             h_idx = idx-1
 
         if verbose: 
-            print("\t  rank_idx:", rank_idx, \
-                   " (closest) h_rank: ", h_rank, \
-                   " \n\t smd2 ", data, \
-                   " \n\t index_diracs ", index_diracs, \
-                   " \n\t idx_argsort ", idx_argsort, \
-                   " \n\t idx_ranks ", idx_ranks)
-                   # " \n\t diracs ", diracs, \
+            print( " \n\t idx:", idx, \
+                   " \n\t h_idx:", h_idx, \
+                   " \n\t rank_idx:", rank_idx, \
+                   " \n\t closest h_rank: ", h_rank, \
+                   " \n\t rank_idx - h_rank: ",  (rank_idx - h_rank), \
+                   " \n\t hthres*rank_idx + 1: ",  (hthres*rank_idx + 1), \
+                   " \n\t thres: ",  hthres, \
+                   " \n smd2 ", data, \
+                   " \n index_diracs ", index_diracs, \
+                   " \n idx_argsort ", idx_argsort, \
+                   " \n idx_ranks ", idx_ranks,\
+                   " \n lspik ", lspik)
 
-        # are those two ranks of close ? here, I assume close means 
-        # close within the number of detected spikes.
         # first, check that the rank of the original spike is higher
         assert rank_idx > h_rank, print("h_rank pb", h_rank)
 
-        if np.abs(rank_idx - h_rank) <= hthres*nb_spikes:
-            # this criteria should be changed for a quantile of 
-            # the remaining ranks after removing those of spik 
-            if verbose: print("\t *** Found one by histeresis *** ")
+        # 2 conditions: lspik is 1, and the ranks are close enough
+        if ((rank_idx - h_rank) <= hthres*rank_idx + 1) and lspik[h_idx]:
             new_spik[h_idx] = 1
+            if verbose: print("\t *** Found one by histeresis *** ")
 
     return new_spik
 
   
-def spikes_from_slice_diff(smd2, Zalph=5., histeresis=True, 
-                                            hthres=2., verbose=0):
+def spikes_from_slice_diff(smd2, Zalph=5., lZalph=3., histeresis=True, 
+                                            hthres=.15, verbose=0):
     """ 
     input
     ------
     (T-1,S): numpy array
     Zalph: float
         cut off for the sum of square
+    lZalph: float
+        lower cut off for the sum of square, used to detect histeresis spikes 
+        value must be above this threshold to be a candidate for histeresis
     hthres: float
         cut off for histeresis : keep point under threshold Zalph if their rank
         is within hthres times the number of spikes detected. For example, if
@@ -185,6 +188,7 @@ def spikes_from_slice_diff(smd2, Zalph=5., histeresis=True,
     
     T_1,S = smd2.shape
     spikes = np.zeros(shape=smd2.shape, dtype='int')
+    lspikes = np.zeros(shape=smd2.shape, dtype='int')
     if verbose: print("entering spikes from slices")
     
     for sl in range(S):
@@ -192,13 +196,15 @@ def spikes_from_slice_diff(smd2, Zalph=5., histeresis=True,
         loc = np.median(smd2[:,sl]) 
         scale = sm.robust.scale.stand_mad(smd2[:,sl])
         spikes[:,sl] = (smd2[:,sl] >  loc + Zalph*scale)
+        lspikes[:,sl] = (smd2[:,sl] >  loc + lZalph*scale)
         #nb_spikes = spikes[:,sl].sum()
         if verbose:
             print("found ", spikes[:,sl].sum(), "spike(s) at sl", sl, \
                     "\n spikes :", spikes[:,sl])
         
         if histeresis:
-            other_spikes = add_histeresis(smd2[:,sl], spikes[:,sl])
+            other_spikes = add_histeresis(smd2[:,sl], spikes[:,sl], lspikes[:,sl],
+                                                hthres=hthres, verbose=verbose)
             spikes[:,sl] += other_spikes
 
     return spikes
@@ -281,7 +287,7 @@ def final_detection(spkes, verbose=0):
 #    #finally returns points == 2
     
 
-def spike_detector(fname, Zalph=5., histeresis=True, hthres=2., verbose=0):
+def spike_detector(fname, Zalph=5., lZalph=3., histeresis=True, hthres=2., verbose=0):
     """
     fname: name of nifti image, time is last dimension
     other: see spikes_from_slice_diff function
@@ -290,13 +296,15 @@ def spike_detector(fname, Zalph=5., histeresis=True, hthres=2., verbose=0):
     img = nib.load(fname)
     arr = img.get_data()
     assert len(arr.shape) == 4 # need a 4d nifti
+    assert arr.shape[3] > max(arr.shape[:-1]), \
+            print("time dim should be greater than others and shape is:", arr.shape)
 
     # 
     qc = time_slice_diffs(arr)
     # tsdiffplot.plot_tsdiffs(qc)
     smd2 = qc['slice_mean_diff2']
-    spikes = spikes_from_slice_diff(smd2, Zalph=Zalph, histeresis=histeresis, 
-                                               hthres=hthres, verbose=verbose)
+    spikes = spikes_from_slice_diff(smd2, Zalph=Zalph, lZalph=lZalph, 
+                            histeresis=histeresis, hthres=hthres, verbose=verbose)
     final = final_detection(spikes, verbose=verbose)
     times_to_correct = np.where(final.sum(axis=1) > 0)[0]
     slices_to_correct = {}
