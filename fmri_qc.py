@@ -1,11 +1,11 @@
 from __future__ import print_function
 import numpy as np
-import nipy as nip
+#import nipy as nip
 import nibabel as nib
-import os.path as osp
-import glob
-import matplotlib.pyplot as plt
-import scipy.stats as sst
+#import os.path as osp
+#import glob
+#import matplotlib.pyplot as plt
+#import scipy.stats as sst
 import statsmodels.api as sm
 
 from nipy.algorithms.diagnostics.timediff import time_slice_diffs
@@ -40,13 +40,13 @@ def detect_dirac_spikes(smd2):
 
     return diracs
 
-def detect_pattern(d, patt, ppos=None, dpos=0):
+def detect_pattern(d, patt, ppos=None, dpos=0, verbose=0):
     """
     d : numpy array  
         The data timeXslice - pattern is search over axis 0
     patt: numpy array | list
         the pattern to detect
-    ppos: 's'|'e'|integer
+    ppos: 's'|'e'|integer | None
         pattern position: a specific position in time to detect the pattern, 
         None means over all possible axis 0 positions
     dpos: integer
@@ -62,18 +62,35 @@ def detect_pattern(d, patt, ppos=None, dpos=0):
     assert dpos < lpatt, print("dpos < lpatt ", dpos, " < ",lpatt)
 
     lh = T-(lpatt-1)
+    if verbose:
+        print("\n patt:", patt, "\n d:", d, "\n ppos:", dpos, "\n dpos", dpos)
     # if length of patt is 3, then length of possible hits is T-2
 
-    h = np.ones((lh,S), dtype=np.bool)
-    
-    for i,p in enumerate(patt):
-        d_is_p = (d[i:i+lh,:]==p)
-        h = np.logical_and(h, d_is_p)
-        
-       #debug; print("i:", i, " p:", p) #print(d_is_p) #print(h) #print("and")
-       #print(h)
+    # check that pattern position ppos is not out of bound
 
-    hits[dpos:dpos+lh,:] = h
+    
+    if ppos is not None:
+        # make ppos a number if necessary
+        ppos = (0 if ppos=='s' else ( (T-lpatt) if ppos=='e' else ppos ))
+        # check range
+        assert ppos in range(T-lpatt+1), \
+            print("ppos: ", ppos, "T-lpatt+1:", T-lpatt+1, "patt", patt, T, S)
+
+        # use the same function to get the hits on a small bit of the array
+        # small hits is "shits"
+        shits = detect_pattern(d[ppos:ppos+lpatt,:], patt)
+        hits[ppos+dpos,:] = shits[0,:]
+        print("shits:", shits)
+    else: 
+        h = np.ones((lh,S), dtype=np.bool)
+        
+        for i,p in enumerate(patt):
+            d_is_p = (d[i:i+lh,:]==p)
+            h = np.logical_and(h, d_is_p)
+        # debug; print("i:", i, " p:", p) #print(d_is_p) #print(h) #print("and")
+        # print(h)
+
+        hits[dpos:dpos+lh,:] = h
 
     return hits
     
@@ -97,7 +114,7 @@ def add_histeresis(data, spik, hthres=2., verbose=0):
 
     # detect the "diracs" in the time dimention
     nb_spikes = spik.sum()
-    diracs = fqc.detect_dirac_spikes(spik)
+    diracs = detect_dirac_spikes(spik)
     index_diracs = np.where(diracs)[0]
 
     if verbose: 
@@ -208,10 +225,36 @@ def final_detection(spkes, verbose=0):
     
     # 
     T_1, S = spkes.shape
+    if verbose: 
+        print("\n spkes\n", spkes)
+
     final = np.zeros(shape=(T_1+1, S), dtype=int)
-   
+     
+    # detect [1,0] at the begining
+    patt = [1,0]
+    tmp = detect_pattern(spkes, patt, ppos='s', dpos=0, verbose=0)
+    final[0,:] = tmp[0,:]
 
+    patt = [0,1,1,0]
+    tmp = detect_pattern(spkes, patt, ppos=None, dpos=1, verbose=0)
+    final[1:,:] += tmp
 
+    patt = [0,1,1]
+    ppos = T_1 - len(patt) 
+    dpos = 1
+    tmp = detect_pattern(spkes, patt, ppos=ppos, dpos=dpos, verbose=0)
+    final[ppos+1+dpos,:] += tmp[ppos+dpos,:]
+
+    patt = [0,1]
+    ppos = T_1 - len(patt) 
+    dpos = 1
+    tmp = detect_pattern(spkes, patt, ppos=ppos, dpos=dpos, verbose=0)
+    final[ppos+1+dpos,:] += tmp[ppos+dpos,:]
+
+    if verbose: 
+        print("\n final in final detection \n", final)
+
+    return final 
 
 #    # first compute where there should be some spikes : 
 #    # ie, when we have 2 consecutive ones : 
@@ -236,7 +279,6 @@ def final_detection(spkes, verbose=0):
 #    np.where(final[-1,:]==1, 2, final[-1,:])
 #    
 #    #finally returns points == 2
-    return (final == 2).astype(int)
     
 
 def spike_detector(fname, Zalph=5., histeresis=True, hthres=2., verbose=0):
